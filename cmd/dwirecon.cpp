@@ -370,11 +370,18 @@ void run ()
   {
     auto mopt = get_options("atommask");
     if (mopt.size()) {
-      auto amask = Image<bool>::open(mopt[0][0]);
+      // float image and explicit x-fastest indexing (the recon-grid order): a Float32 mask opened as Image<bool>
+      // (indirect IO) segfaulted here on Linux, and a Loop follows the file's strides rather than the grid order
+      auto amask = Image<float>::open(mopt[0][0]);
       check_dimensions(rechdr, amask, 0, 3);
       size_t v = 0;
-      for (auto l = Loop({0, 1, 2})(amask); l; l++, v++)
-        if (amask.value()) atomvox.push_back(v);
+      for (ssize_t z = 0; z < amask.size(2); z++)
+        for (ssize_t yy = 0; yy < amask.size(1); yy++)
+          for (ssize_t xx = 0; xx < amask.size(0); xx++, v++) {
+            amask.index(0) = xx; amask.index(1) = yy; amask.index(2) = z;
+            const float m = amask.value();
+            if (std::isfinite(m) && m > 0.5f) atomvox.push_back(v);
+          }
     }
   }
   const bool nonneg = get_options("nonneg").size();
