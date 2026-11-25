@@ -6,6 +6,7 @@
  * FOR A PARTICULAR PURPOSE.
  */
 
+#include "dwi/shells.h"
 #include <sstream>
 
 #include "command.h"

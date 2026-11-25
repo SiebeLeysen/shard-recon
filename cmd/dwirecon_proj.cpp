@@ -13,12 +13,14 @@
 #include "image.h"
 #include "math/SH.h"
 #include "dwi/gradient.h"
-#include "phase_encoding.h"
+#include "metadata/phase_encoding.h"
 #include "dwi/shells.h"
+#include "dwi/svr/shells.h"
 #include "adapter/extract.h"
 
 #include "dwi/svr/qspacebasis.h"
 #include "dwi/svr/mapping.h"
+#include "dwi/svr/recon.h"
 
 #define DEFAULT_LMAX 4
 #define DEFAULT_SSPW 1.0f
@@ -73,7 +75,7 @@ void usage ()
 
   + DWI::GradImportOptions()
 
-  + PhaseEncoding::ImportOptions;
+  + Metadata::PhaseEncoding::ImportOptions;
 
 }
 
@@ -104,7 +106,7 @@ void run ()
 
   // Select shells
   auto grad = DWI::get_DW_scheme (dwi);
-  DWI::Shells shells (grad);
+  DWI::SVR::SVRShells shells (grad);
   shells.select_shells (false, false, false);
 
   // Read multi-shell basis
@@ -135,7 +137,7 @@ void run ()
   size_t fieldidx = 0;
   Eigen::MatrixXf PE;
   if (hasfield) {
-    auto petable = PhaseEncoding::get_scheme(dwi);
+    auto petable = Metadata::PhaseEncoding::get_scheme(dwi);
     PE = petable.leftCols<3>().cast<float>();
     PE.array().colwise() *= petable.col(3).array().cast<float>();
     // -----------------------  // TODO: Eddy uses a reverse LR axis for storing
@@ -181,41 +183,49 @@ void run ()
   DWI::SVR::QSpaceBasis qbasis {grad.cast<float>(), lmax, rf, motion};
 
 
-    auto init = Image<value_type>::open(argument[1]).with_direct_io({3, 4, 5, 2, 1});
-
-    size_t ncoefs = qbasis.get_ncoefs();
-    Header tmp (init);
-    tmp.ndim() = 4;
-    tmp.size(3) = ncoefs;
-    auto recon = Image<value_type>::scratch(tmp).with_direct_io(3);
-
+    auto init = Image<value_type>::open(argument[1]);
     check_dimensions(dwi, init, 0, 3);
     if ((init.size(3) != shells.count()) || (init.size(4) < Math::SH::NforL(lmax)))
       throw Exception("dimensions of init image don't match.");
+
+    // coefficients held as in dwirecon: a vector with the coefficient axis fastest, viewed through ImageView
+    // (a scratch Image adapted by QSpaceMapping segfaults in the forward projection with current MRtrix)
+    size_t ncoefs = qbasis.get_ncoefs();
+    Header rechdr (init);
+    rechdr.ndim() = 4;
+    rechdr.size(3) = ncoefs;
+    Stride::set (rechdr, {2, 3, 4, 1});
+    rechdr.datatype() = DataType::Float32;
+    rechdr.sanitise();
+    Eigen::VectorXf x (voxel_count(rechdr));
+
     // convert from mssh
-    Eigen::VectorXf c (shells.count() * Math::SH::NforL(lmax));
-    Eigen::VectorXf r (ncoefs);
+    const size_t nsh = Math::SH::NforL(lmax);
+    Eigen::VectorXf c (shells.count() * nsh);
     Eigen::MatrixXf x2mssh (c.size(), ncoefs); x2mssh.setZero();
-    for (int k = 0; k < shells.count(); k++)
-      x2mssh.middleRows(k*Math::SH::NforL(lmax), Math::SH::NforL(lmax)) = qbasis.getShellBasis(k).transpose();
+    for (size_t k = 0; k < shells.count(); k++)
+      x2mssh.middleRows(k*nsh, nsh) = qbasis.getShellBasis(k).transpose();
     auto mssh2x = x2mssh.fullPivHouseholderQr();
-    for (auto l = Loop("loading initialisation", 0, 3) (init, recon); l; l++) {
-      size_t k = 0;
-      for (auto l2 = Loop(3)(init); l2; l2++) {
-        for (init.index(4) = 0; init.index(4) < Math::SH::NforL(lmax); init.index(4)++)
-          c[k++] = std::isfinite((float) init.value()) ? init.value() : 0.0f;
-      }
-      r = mssh2x.solve(c);
-      recon.row(3) = r;
+    size_t j = 0;
+    for (auto l = Loop("loading SH coefficients", {0, 1, 2}) (init); l; l++, j += ncoefs) {
+      for (init.index(3) = 0; init.index(3) < init.size(3); init.index(3)++)
+        for (init.index(4) = 0; init.index(4) < ssize_t (nsh); init.index(4)++) {
+          float val = init.value();
+          c[init.index(3)*nsh + init.index(4)] = std::isfinite(val) ? val : 0.0f;
+        }
+      x.segment(j, ncoefs) = mssh2x.solve(c);
     }
 
+    Header srchdr (dwi);
+    Stride::set (srchdr, {1, 2, 3, 4});
+    DWI::set_DW_scheme (srchdr, grad);
+    srchdr.datatype() = DataType::Float32;
+    srchdr.sanitise();
 
-    DWI::SVR::ReconMapping map (recon, dwi, qbasis, motion, ssp);
+    DWI::SVR::ReconMapping map (rechdr, srchdr, qbasis, motion, ssp);
+    ImageView<value_type> recon (rechdr, x.data());
 
-
-    Header header (dwi);
-    DWI::set_DW_scheme (header, grad);
-    auto spred = Image<value_type>::create(argument[2], header);
+    auto spred = Image<value_type>::create(argument[2], srchdr);
 
     map.x2y(recon, spred);
 

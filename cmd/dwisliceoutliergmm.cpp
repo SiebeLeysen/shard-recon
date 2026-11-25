@@ -13,6 +13,7 @@
 #include "math/rng.h"
 #include "dwi/gradient.h"
 #include "dwi/shells.h"
+#include "dwi/svr/shells.h"
 #include "interp/nearest.h"
 
 #include "dwi/svr/param.h"
@@ -250,7 +251,7 @@ void run ()
     throw Exception ("Multiband factor incompatible with image dimensions.");
 
   auto grad = DWI::get_DW_scheme (data);
-  DWI::Shells shells (grad);
+  DWI::SVR::SVRShells shells (grad);
 
   // Compute RMSE of each slice
   RMSErrorFunctor rmse (data, mask, motion, mb);

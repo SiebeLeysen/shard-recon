@@ -9,6 +9,7 @@
 #ifndef __dwi_svr_register_h__
 #define __dwi_svr_register_h__
 
+#include "dwi/shells.h"
 #include <Eigen/Dense>
 #include <unsupported/Eigen/MatrixFunctions>
 #include <unsupported/Eigen/LevenbergMarquardt>

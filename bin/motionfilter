@@ -42,8 +42,8 @@ if __name__ == '__main__':
     W1 = np.reshape(np.mean(W.reshape((-1, ne, nv)), axis=0)[sliceorder,:], (-1,1));
     # filter: t'_i = w * t_i + (1-w) * (t'_(i-1) + t'_(i+1)) / 2
     A = np.eye(nv*ne) - 0.5 * (1.-W1) * (np.eye(nv*ne, k=1) + np.eye(nv*ne, k=-1))
-    A[0,1] = W1[0] - 1
-    A[-1,-2] = W1[-1] - 1
+    A[0,1] = W1[0,0] - 1
+    A[-1,-2] = W1[-1,0] - 1
     M2 = np.linalg.solve(A, W1 * M1)
     # median filtering
     if ne > 1:
